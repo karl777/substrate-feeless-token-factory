@@ -62,7 +62,7 @@ pub type Hash = primitives::H256;
 pub type DigestItem = generic::DigestItem<Hash>;
 
 /// Used for the module template in `./template.rs`
-mod fungible;
+mod generix;
 
 /// Opaque types. These are used by the CLI to instantiate machinery that don't need to know
 /// the specifics of the runtime. They can then be made to be agnostic over specific formats
@@ -258,7 +258,7 @@ parameter_types! {
 }
 
 /// Used for the module template in `./template.rs`
-impl fungible::Trait for Runtime {
+impl generix::Trait for Runtime {
 	type Event = Event;
 	type TokenBalance = u64;
 	type TokenId = u32;
@@ -282,7 +282,7 @@ construct_runtime!(
 		Indices: indices::{default, Config<T>},
 		Balances: balances,
 		Sudo: sudo,
-		Fungible: fungible::{Module, Call, Storage, Event<T>},
+		Generix: generix:{Module, Call, Storage, Event<T>},
 	}
 );
 
