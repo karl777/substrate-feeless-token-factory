@@ -1,4 +1,4 @@
-# substrate-feeless-token-factory
+# substrate-generix-token-factory
 
 The goal of this project is to investigate alternative fee mechanics for managing token assets.
 
@@ -14,28 +14,22 @@ Businesses have shown that they would be more than happy to fund the usage of th
 
 In simple terms, this project provides a runtime module which provides the following features:
 
-* A token factory where any user is able to create an ERC20 compliant token on top of the Substrate runtime
-* An additional API for transfer of these tokens without the end user paying any fees in the native currency
-
+*  
 Ideas for alternative payment methods for transfers:
 
-- [x] Token Fee Fund: A fund for a particular token where token transfers are paid from the fund.
-- [x] Pay with Token: The ability to "pay" the block producer not with the native currency, but with the token you are trying to transfer.
-- [ ] Proof of Work: Complete some small proof of work along with your transfer to allow the transaction to be included.
-- [ ] ?
+Genswap is an automated market making decentralized exchange built on GeneriX custom Substrate blockchain.
 
-At the time of writing this, the "pay with token" method is not quite supported with our front end libraries.
+Genswap introduces a new blockchain scaling methodology termed 'generic liquidity' by allowing users to pay blockchain transaction fees using listed custom tokens.
 
-## User Story
+Implements off-chain workers unsigned transactions with signed payloads.
 
-For example, the "Better Energy Foundation" issue a new token to be used as electricity credits.
+Users intialize transactions without the need to have gas forehand, however the send a signed payload allowing Genswap to swap 'x' amount of a listed token 'y' to the native Substrate blockchain currency (GEX). The signed payload may include arbitrary blockchain computation logic including: *Sending tokens *Deploying smart contracts *Calling on-chain smart contracts
 
-When they do this, they fund the token with an **initial fund** of the underlying blockchain currency: **10,000 units**. They specify that the users of their token have **10 free transactions every 1,000 blocks**.
+Swapped transaction fees are sent to the GeneriX Treasury.
 
-They can sell their tokens and transfer them to the buyers just like a normal ICO.
+GeneriX utilizes a Hybrid PoW-PoS chain consensus and with no tokens premined - follows Kulupu example
 
-These buyers can then call the `try_free_transfer` function when trying to trade the token among their peers, and the fees are paid for using the fund.
 
-Anyone in the community can continue to add more funds, and allow the free transfers to continue.
+These buyers can then call the `try_generix_transfer` function when trying to trade the token among their peers, and the fees are paid for by swapping erc20 token to the native substrate token.
 
-If a user does not have any more "free" transactions left for the current period, they can always make a transaction using the normal `transfer` function which will charge them a normal fee.
+Users can always make a transaction using the normal `transfer` function which will charge them a normal fee.
