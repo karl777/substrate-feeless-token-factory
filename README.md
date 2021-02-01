@@ -23,7 +23,7 @@ Genswap introduces a new blockchain scaling methodology termed 'generic liquidit
 
 Implements off-chain workers unsigned transactions with signed payloads.
 
-Users intialize transactions without the need to have gas forehand, however the send a signed payload allowing Genswap to swap 'x' amount of a listed token 'y' to the native Substrate blockchain currency (GEX). The signed payload may include arbitrary blockchain computation logic including: *Sending tokens *Deploying smart contracts *Calling on-chain smart contracts
+Users intialize transactions without the need to have gas forehand, however the send a signed payload allowing Genswap to swap 'x' amount of a listed token 'y' to the native Substrate blockchain currency (GIX). The signed payload may include arbitrary blockchain computation logic including: *Sending tokens *Deploying smart contracts *Calling on-chain smart contracts
 
 Swapped transaction fees are sent to the GeneriX Treasury.
 
