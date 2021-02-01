@@ -17,6 +17,16 @@ use sr_primitives::traits::{Member, SimpleArithmetic, Zero, StaticLookup, One,
 	CheckedAdd, CheckedSub, SignedExtension, DispatchError, MaybeSerializeDebug,
 	SaturatedConversion, AccountIdConversion,
 };
+
+use sp_runtime::{
+	traits::{
+		AccountIdConversion, AtLeast32Bit, CheckedAdd, CheckedMul, CheckedSub, MaybeSerializeDeserialize, Member, One,
+		Saturating, UniqueSaturatedInto, Zero,
+	},
+	DispatchError, DispatchResult, FixedPointNumber, FixedPointOperand, ModuleId,
+};
+use sp_std::prelude::Vec;
+
 use sr_primitives::weights::{DispatchInfo, SimpleDispatchInfo};
 use sr_primitives::transaction_validity::{TransactionPriority, ValidTransaction};
 use system::ensure_signed;
@@ -25,6 +35,10 @@ use codec::{Encode, Decode, Codec};
 pub trait Trait: system::Trait {
 
 	type Currency: Currency<Self::AccountId>;
+
+	/// Associate type for measuring liquidity contribution of specific trading
+	/// pairs
+	type Share: Parameter + Member + AtLeast32Bit + Default + Copy + MaybeSerializeDeserialize + FixedPointOperand;
 
 	/// The overarching event type.
 	type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
@@ -37,7 +51,7 @@ pub trait Trait: system::Trait {
 
 	type FindAuthor: FindAuthor<Self::AccountId>;
 
-	type TokenFreeTransfers: Parameter + SimpleArithmetic + Default + Copy;
+	type GenerixToken: Parameter + SimpleArithmetic + Default + Copy;
 
 	type FreeTransferPeriod: Get<Self::BlockNumber>;
 
@@ -64,51 +78,59 @@ decl_event!(
 
 // This module's storage items.
 decl_storage! {
-	trait Store for Module<T: Trait> as Fungible {
+	trait Store for Module<T: Trait> as Generix {
 		Count get(count): T::TokenId;
 
 		// ERC 20
 		TotalSupply get(total_supply): map T::TokenId => T::TokenBalance;
 		Balances get(balance_of): map (T::TokenId, T::AccountId) => T::TokenBalance;
 		Allowance get(allowance_of): map (T::TokenId, T::AccountId, T::AccountId) => T::TokenBalance;
-		
-		// Free Transfers
-		FreeTransfers get(free_transfers): map T::TokenId => T::TokenFreeTransfers;
-		FreeTransferCount get(free_transfer_count): double_map (), blake2_128((T::TokenId, T::AccountId)) => T::TokenFreeTransfers;
+
+		/// Liquidity pool, which is the trading pair for specific currency type to base currency type.
+		/// CurrencyType -> (OtherCurrencyAmount, BaseCurrencyAmount)
+		LiquidityPool get(liquidity_pool): map T::TokenId => (T::TokenBalance, BalanceOf<T>);
+
+		/// Total shares amount of liquidity pool specified by currency type
+		/// CurrencyType -> TotalSharesAmount
+		TotalShares get(total_shares): map T::TokenId => T::Share;
+
+		/// Shares records indexed by currency type and account id
+		/// CurrencyType -> Owner -> ShareAmount
+		Shares get(shares): double_map (), blake2_128((T::TokenId, T::AccountId)) => T::Share;
+
 	}
 }
 
 // The module's dispatchable functions.
 decl_module! {
 	pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+
 		fn deposit_event<T>() = default;
 
-		/// The time before free transfers are reset
-		const FreeTransferPeriod: T::BlockNumber = T::FreeTransferPeriod::get();
-		const FundTransferFee: BalanceOf<T> = T::FundTransferFee::get();
+		/// The DEX's module id, keep all assets in DEX.
+		const ModuleId: ModuleId = T::ModuleId::get();
 
-
-		fn on_initialize(n: T::BlockNumber) {
-			if n % T::FreeTransferPeriod::get() == Zero::zero() {
-				// Reset everyone's transfer count
-				<FreeTransferCount<T>>::remove_prefix(&());
-			}
-		}
 
 		#[weight = SimpleDispatchInfo::FixedNormal(1_000_000)]
-		fn create_token(origin, #[compact] total_supply: T::TokenBalance, free_transfers: T::TokenFreeTransfers, deposit: BalanceOf<T>) {
+
+		fn create_token(origin, #[compact] total_supply: T::TokenBalance, generix_supply: T::GenerixToken, deposit: BalanceOf<T>) {
 			let sender = ensure_signed(origin)?;
 
 			let id = Self::count();
 			let next_id = id.checked_add(&One::one()).ok_or("overflow when adding new token")?;
-			let imbalance = T::Currency::withdraw(&sender, deposit, WithdrawReason::Transfer, ExistenceRequirement::KeepAlive)?;
+			let (other, base): (GenerixToken, BalanceOf<T>) = Self::liquidity_pool(id);
 
-			<Balances<T>>::insert((id, sender.clone()), total_supply);
+			<Balances<T>>::insert((id, sender.clone()), (total_supply - generix_supply));
+			<LiquidityPool<T>>::insert(id, (generix_supply, 0));
 			<TotalSupply<T>>::insert(id, total_supply);
-			<FreeTransfers<T>>::insert(id, free_transfers);
 			<Count<T>>::put(next_id);
 
-			T::Currency::resolve_creating(&Self::fund_account_id(id), imbalance);
+			T::Currency::transfer(&sender, &Self::account_id(), deposit)?;
+
+			LiquidityPool::mutate(id, |(other, base)| {
+				*other = generix_supply;
+				*base = deposit;
+			});
 
 			Self::deposit_event(RawEvent::NewToken(id, sender.clone(), total_supply));
 
@@ -116,31 +138,31 @@ decl_module! {
 		}
 
 		#[weight = SimpleDispatchInfo::FixedNormal(0)]
-		fn try_free_transfer(origin,
+
+		fn try_generix_transfer(origin,
 			#[compact] id: T::TokenId,
 			to: <T::Lookup as StaticLookup>::Source,
 			#[compact] amount: T::TokenBalance
 		) {
 			let sender = ensure_signed(origin)?;
 			let to = T::Lookup::lookup(to)?;
-
-			let free_transfer_limit = Self::free_transfers(id);
-			let free_transfer_count = Self::free_transfer_count(&(), &(id, sender.clone()));
-			let new_free_transfer_count = free_transfer_count
-				.checked_add(&One::one()).ok_or("overflow when counting new transfer")?;
-
-			ensure!(free_transfer_count < free_transfer_limit, "no more free transfers available");
-			ensure!(!amount.is_zero(), "transfer amount should be non-zero");
-			ensure!(amount <= Self::balance_of((id, sender.clone())), "user does not have enough tokens");
-
-			// Burn fees from funds
 			let fund_account = Self::fund_account_id(id);
 			let fund_fee = T::FundTransferFee::get();
-			let _ = T::Currency::withdraw(&fund_account, fund_fee, WithdrawReason::Transfer, ExistenceRequirement::AllowDeath)?;
+			let from_balance = Self::balance_of((id, sender.clone()));
+
+			ensure!(!amount.is_zero(), "transfer amount should be non-zero");
+			ensure!(from_balance >= 2*(amount.clone()), "user does not have enough tokens");
+
+            // Swap fees from dex and update liquidity pool
+			<Balances<T>>::insert((id, sender.clone()), from_balance - amount.clone());
+			T::Currency::transfer(&Self::account_id(), fund_account, fund_fee)?;
+			LiquidityPool::mutate(id, |(other, base)| {
+				*other = other.saturating_add(amount);
+				*base = base.saturating_sub(fund_fee);
+			});
 
 			Self::make_transfer(id, sender.clone(), to, amount).expect("user has been checked to have enough funds to transfer. qed");
 
-			<FreeTransferCount<T>>::insert(&(), &(id, sender), &new_free_transfer_count);
 		}
 
 		fn transfer(origin,
@@ -164,7 +186,7 @@ decl_module! {
 			let spender = T::Lookup::lookup(spender)?;
 
 			<Allowance<T>>::insert((id, sender.clone(), spender.clone()), value);
-			
+
 			Self::deposit_event(RawEvent::Approval(id, sender, spender, value));
 		}
 
@@ -199,8 +221,12 @@ impl<T: Trait> Module<T> {
 		MODULE_ID.into_sub_account(index)
 	}
 
+	pub fn account_id() -> T::AccountId {
+		T::ModuleId::get().into_account()
+	}
+
 	fn make_transfer(id: T::TokenId, from: T::AccountId, to: T::AccountId, amount: T::TokenBalance) -> Result {
-		
+
 		let from_balance = Self::balance_of((id, from.clone()));
 		ensure!(from_balance >= amount.clone(), "user does not have enough tokens");
 
@@ -243,7 +269,7 @@ impl<T: Trait> SignedExtension for TakeTokenFees<T> {
 		_info: DispatchInfo,
 		_len: usize,
 	) -> rstd::result::Result<ValidTransaction, DispatchError> {
-		
+
 		let id = self.id;
 		let fee = self.value;
 
@@ -393,7 +419,7 @@ mod tests {
 			assert_eq!(FungibleModule::allowance_of((0, 1, 2)), 0);
 			assert_eq!(FungibleModule::free_transfers(0), 0);
 			assert_eq!(FungibleModule::free_transfer_count(&(), &(0, 1)), 0);
-			
+
 			// No funds deposited yet
 			assert_eq!(Balances::free_balance(FungibleModule::fund_account_id(0)), 0);
 		});
