@@ -51,8 +51,6 @@ pub trait Trait: system::Trait {
 
 	type FindAuthor: FindAuthor<Self::AccountId>;
 
-	type GenerixToken: Parameter + SimpleArithmetic + Default + Copy;
-
 	type FreeTransferPeriod: Get<Self::BlockNumber>;
 
 	type FundTransferFee: Get<BalanceOf<Self>>;
@@ -113,12 +111,12 @@ decl_module! {
 
 		#[weight = SimpleDispatchInfo::FixedNormal(1_000_000)]
 
-		fn create_token(origin, #[compact] total_supply: T::TokenBalance, generix_supply: T::GenerixToken, deposit: BalanceOf<T>) {
+		fn create_token(origin, #[compact] total_supply: T::TokenBalance, generix_supply: T::TokenBalance, deposit: BalanceOf<T>) {
 			let sender = ensure_signed(origin)?;
 
 			let id = Self::count();
 			let next_id = id.checked_add(&One::one()).ok_or("overflow when adding new token")?;
-			let (other, base): (GenerixToken, BalanceOf<T>) = Self::liquidity_pool(id);
+			let (other, base): (TokenBalance, BalanceOf<T>) = Self::liquidity_pool(id);
 
 			<Balances<T>>::insert((id, sender.clone()), (total_supply - generix_supply));
 			<LiquidityPool<T>>::insert(id, (generix_supply, 0));
