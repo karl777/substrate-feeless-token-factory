@@ -128,8 +128,8 @@ decl_module! {
 			T::Currency::transfer(&sender, &Self::account_id(), deposit)?;
 
 			LiquidityPool::mutate(id, |(other, base)| {
-				*other = generix_supply;
-				*base = deposit;
+				*other = other.saturating_add(generix_supply);
+				*base = base.saturating_add(deposit);
 			});
 
 			Self::deposit_event(RawEvent::NewToken(id, sender.clone(), total_supply));
